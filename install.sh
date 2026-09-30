@@ -33,11 +33,18 @@ fi
 # 1) Separate Proton copy with the patched vkd3d-proton (Proton Experimental itself is untouched)
 echo "== Creating $DST"
 rm -rf "$DST"
+mkdir -p "$DST"
 cp -a "$EXP" "$DST"
 rm -f "$DST/dist.lock"
+mkdir -p $STEAM/compatibilitytools.d/Proton-Exp-RT-AMD/files/lib/wine/vkd3d-proton/x86_64-windows/
+mkdir -p $STEAM/compatibilitytools.d/Proton-Exp-RT-AMD/files/lib/wine/vkd3d-proton/i386-windows/
+ 
 cp -f "$BUILD/x64/d3d12.dll" "$BUILD/x64/d3d12core.dll" "$DST/files/lib/wine/vkd3d-proton/x86_64-windows/"
 cp -f "$BUILD/x86/d3d12.dll" "$BUILD/x86/d3d12core.dll" "$DST/files/lib/wine/vkd3d-proton/i386-windows/"
 # bump version so Proton re-syncs the DLLs into the prefix
+if [[ ! -f "$EXP/version" ]]; then
+    echo "Proton-Experimental is not found on $STEAM,please check your Steam installation,might in other disks, please migrate it to $STEAM."; exit 1
+fi
 read -r ts name < "$EXP/version"
 echo "$((ts + 1)) ${name}-rtamd" > "$DST/version"
 cat > "$DST/compatibilitytool.vdf" <<'EOF'
