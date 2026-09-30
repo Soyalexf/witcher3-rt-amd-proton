@@ -82,8 +82,8 @@ Results (first session, ~20 min):
   gone with dxil-spirv PR #311.
 - GPU fully engaged with RT on: 99 % busy for the whole 2‑minute sample, ~254 W, ~8.7 GB VRAM
   (vs ~6.4 GB and 67–83 % busy at a 72 fps cap without RT).
-- ~40 fps (Steam overlay counter) at 1440p with FSR Quality — note this reading was taken with the in‑game settings
-  menu open over the scene; in‑game numbers welcome.
+- In gameplay at 1440p, *RT* preset, FSR Quality: **~45 fps** without frame generation, **~60 fps** with AMD FSR
+  frame generation enabled.
 
 ## Credits
 
