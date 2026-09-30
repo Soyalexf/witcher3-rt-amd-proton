@@ -40,6 +40,19 @@ preset in *Graphics*.
 
 To undo everything: `bash install.sh --restore` (or *Verify integrity of game files* in Steam for the exe).
 
+### Steam libraries on other drives
+
+`install.sh` looks for Proton Experimental and The Witcher 3 in every Steam library listed in
+`~/.local/share/Steam/steamapps/libraryfolders.vdf`, so they can live on another disk. To use a specific copy of
+Proton Experimental, point to it explicitly:
+
+```bash
+PROTON_EXP_DIR="/mnt/games/SteamLibrary/steamapps/common/Proton - Experimental" bash install.sh
+```
+
+If Steam itself is not in `~/.local/share/Steam` (e.g. Flatpak), set `STEAM_DIR` to the main Steam directory
+(the one containing `compatibilitytools.d`), not to a secondary library.
+
 ### Hybrid graphics (iGPU + dGPU)
 
 If your CPU has an integrated GPU enabled (e.g. Intel UHD 770), Wine exposes **both** GPUs and the game's hardware
@@ -104,6 +117,11 @@ Proton Experimental y parchea solo los 2 bytes del ejecutable relacionados con e
 
 Pasos: `bash build.sh` → `bash install.sh` → reiniciar Steam → elegir *Proton Experimental RT-AMD* → preset *RT*.
 Para deshacer: `bash install.sh --restore`.
+
+Si Proton Experimental o el juego están en otra biblioteca de Steam (otro disco), `install.sh` los encuentra solo
+leyendo `steamapps/libraryfolders.vdf`. Para usar una copia concreta de Proton:
+`PROTON_EXP_DIR="/ruta/a/Proton - Experimental" bash install.sh`. `STEAM_DIR` debe apuntar siempre a la carpeta
+principal de Steam, no a una biblioteca secundaria.
 
 Si tienes gráfica integrada activa (Intel/AMD iGPU), usa las opciones de lanzamiento `VK_DRIVER_FILES=…radeon_icd.json`
 de arriba; si no, el juego detecta la integrada, elige *Bajo* y bloquea el RT.

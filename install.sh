@@ -2,14 +2,40 @@
 # The Witcher 3 5.0.0.1041720 (Steam build 25575366) — ray tracing on AMD under Proton (experimental)
 #   bash install.sh            -> creates "Proton Experimental RT-AMD" + patches witcher3.exe
 #   bash install.sh --restore  -> removes the custom Proton and restores the original exe
+# Proton Experimental and the game are looked up in every Steam library (steamapps/libraryfolders.vdf);
+# set PROTON_EXP_DIR="/path/to/Proton - Experimental" to use a specific copy.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 STEAM="${STEAM_DIR:-$HOME/.local/share/Steam}"
-EXP="$STEAM/steamapps/common/Proton - Experimental"
+
+# Steam library roots: the main Steam dir first, then every "path" in libraryfolders.vdf
+steam_libraries() {
+    printf '%s\n' "$STEAM"
+    local vdf="$STEAM/steamapps/libraryfolders.vdf"
+    [[ -f "$vdf" ]] || return 0
+    sed -n 's/^[[:space:]]*"path"[[:space:]]*"\(.*\)"[[:space:]]*$/\1/p' "$vdf" | sed 's/\\\\/\\/g'
+}
+
+# Prints steamapps/common/<name> from the first library that has it
+find_in_libraries() {
+    local lib
+    while IFS= read -r lib; do
+        if [[ -d "$lib/steamapps/common/$1" ]]; then
+            printf '%s\n' "$lib/steamapps/common/$1"
+            return 0
+        fi
+    done < <(steam_libraries)
+    return 1
+}
+
+EXP="${PROTON_EXP_DIR:-$(find_in_libraries "Proton - Experimental" || true)}"
+EXP="${EXP%/}"
+# Steam only reads compatibility tools from the main Steam dir, never from other libraries
 DST="$STEAM/compatibilitytools.d/Proton-Exp-RT-AMD"
 BUILD="$HERE/build/vkd3d-proton-w3rt"
-EXE="$STEAM/steamapps/common/The Witcher 3/bin/x64_dx12/witcher3.exe"
+W3="$(find_in_libraries "The Witcher 3" || true)"
+EXE="${W3:-$STEAM/steamapps/common/The Witcher 3}/bin/x64_dx12/witcher3.exe"
 BACKUP_DIR="$HOME/.local/share/witcher3-rt-amd-proton"
 ORIG="$BACKUP_DIR/witcher3.exe.original-5.0.1041720"
 SHA_ORIG="c272b2c2e61f84c758e28fab69ab2915944dd1e539dbb435fae9fc67494c7e25"
@@ -26,13 +52,23 @@ if [[ "${1:-}" == "--restore" ]]; then
     exit 0
 fi
 
-[[ -d "$EXP" ]]   || { echo "Proton Experimental not found at: $EXP"; exit 1; }
+if [[ -z "$EXP" ]]; then
+    echo "Proton Experimental not found in any Steam library listed in $STEAM/steamapps/libraryfolders.vdf."
+    echo "Install it in Steam, or set PROTON_EXP_DIR=\"/path/to/Proton - Experimental\"."
+    exit 1
+fi
+for f in proton version files/lib/wine/vkd3d-proton/x86_64-windows files/lib/wine/vkd3d-proton/i386-windows; do
+    [[ -e "$EXP/$f" ]] || { echo "Not a usable Proton Experimental (missing $f): $EXP"; exit 1; }
+done
+[[ "$(realpath "$EXP")" != "$(realpath -m "$DST")" ]] || { echo "PROTON_EXP_DIR must not be $DST"; exit 1; }
 [[ -f "$BUILD/x64/d3d12core.dll" ]] || { echo "Run build.sh first."; exit 1; }
 [[ -f "$EXE" ]]   || { echo "witcher3.exe not found at: $EXE"; exit 1; }
 
 # 1) Separate Proton copy with the patched vkd3d-proton (Proton Experimental itself is untouched)
+echo "== Using $EXP"
 echo "== Creating $DST"
 rm -rf "$DST"
+mkdir -p "$(dirname "$DST")"
 cp -a "$EXP" "$DST"
 rm -f "$DST/dist.lock"
 cp -f "$BUILD/x64/d3d12.dll" "$BUILD/x64/d3d12core.dll" "$DST/files/lib/wine/vkd3d-proton/x86_64-windows/"
