@@ -9,7 +9,7 @@ VKD3D_BASE=4d06d745      # vkd3d-proton master the fixes were tested on
 VKD3D_PR=3332
 VKD3D_PR_SHA=3e71c269
 DXIL_PR=311
-DXIL_PR_SHA=dcdbadff
+DXIL_PR_SHA=78fa36c3
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
 WORK="$HERE/work"
