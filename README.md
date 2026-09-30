@@ -12,8 +12,7 @@ unavailable on Linux/Proton for two independent reasons:
 2. **Forcing it on crashes RADV** while creating the RT pipelines, because dxil-spirv emits invalid SPIR‑V for the
    `PTRGSFinal` raygen shader. This is fixed by
    [dxil-spirv PR #311](https://github.com/HansKristian-Work/dxil-spirv/pull/311); RTAS sizing also needs
-   [vkd3d-proton PR #3332](https://github.com/HansKristian-Work/vkd3d-proton/pull/3332). Both were merged upstream on
-   2026‑09‑30 but are not in a Proton release yet.
+   [vkd3d-proton PR #3332](https://github.com/HansKristian-Work/vkd3d-proton/pull/3332). Both were merged upstream on 2026‑09‑30.
 
 This repo combines both: it builds vkd3d‑proton with those two PRs, installs it into a **separate copy** of
 Proton Experimental (the original is untouched), and patches only the two RT‑related bytes of the exe
@@ -113,7 +112,7 @@ Investigation, scripts and documentation were done with the help of [Claude Code
 
 Con la actualización 5.0 (Remastered), el RT no funciona en Linux/Proton por dos motivos: el juego lo **bloquea al
 detectar Wine**, y al forzarlo **RADV se cuelga** por un fallo de dxil‑spirv que arregla el PR #311 (ya
-mergeado, pero aún no incluido en Proton). Este repositorio compila vkd3d‑proton con ese arreglo y el PR #3332, lo instala en una **copia aparte** de
+mergeado el 2026‑09‑30). Este repositorio compila vkd3d‑proton con ese arreglo y el PR #3332, lo instala en una **copia aparte** de
 Proton Experimental y parchea solo los 2 bytes del ejecutable relacionados con el RT.
 
 Pasos: `bash build.sh` → `bash install.sh` → reiniciar Steam → elegir *Proton Experimental RT-AMD* → preset *RT*.
