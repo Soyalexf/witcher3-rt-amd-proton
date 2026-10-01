@@ -36,13 +36,17 @@ Proton update changes it. See *The two halves have different lifetimes*.
 ## Usage
 
 ```bash
-git clone https://github.com/Soyalexf/witcher3-rt-amd-proton.git
+git clone https://github.com/daeduol/witcher3-rt-amd-proton.git
 cd witcher3-rt-amd-proton
 bash build.sh      # clones vkd3d-proton + both PRs and builds the DLLs (a few minutes)
-bash install.sh    # creates "Proton Experimental RT-AMD" and patches witcher3.exe (game must be closed)
+bash install.sh    # copies Proton Experimental to "Proton-Exp-RT-AMD" and patches witcher3.exe (game must be closed)
 ```
 
-Then restart Steam, select **Proton Experimental RT-AMD** under *Properties → Compatibility*, and pick the **RT**
+> **Clone the fork, not the original.** These fixes are not upstream yet. The `main` branch of
+> the original repository ([Soyalexf/witcher3-rt-amd-proton](https://github.com/Soyalexf/witcher3-rt-amd-proton))
+> does not have them, and cloning it gives you the unpatched scripts.
+
+Then restart Steam, select **Proton-Exp-RT-AMD** under *Properties → Compatibility*, and pick the **RT**
 preset in *Graphics*.
 
 To undo everything: `bash install.sh --restore` (or *Verify integrity of game files* in Steam for the exe).
@@ -218,7 +222,11 @@ detectar Wine**, y al forzarlo **RADV se cuelga** por un fallo de dxil‑spirv q
 mergeado el 2026‑09‑30). Este repositorio compila vkd3d‑proton con ese arreglo y el PR #3332, lo instala en una **copia aparte** de
 Proton Experimental y parchea solo los 2 bytes del ejecutable relacionados con el RT.
 
-Pasos: `bash build.sh` → `bash install.sh` → reiniciar Steam → elegir *Proton Experimental RT-AMD* → preset *RT*.
+Pasos: `bash build.sh` → `bash install.sh` → reiniciar Steam → elegir *Proton‑Exp‑RT‑AMD* → preset *RT*.
+
+> **Clona el fork, no el original.** Estos arreglos aún no están en el upstream: la rama `main` del
+> repositorio original ([Soyalexf/witcher3-rt-amd-proton](https://github.com/Soyalexf/witcher3-rt-amd-proton))
+> no los tiene, y si clonas ese te llevarás los scripts sin parchear.
 Para deshacer: `bash install.sh --restore`.
 
 Si usas una copia que no es de Steam (GOG, Lutris) o una build de Proton‑GE concreta, `install.sh --in-place` sustituye las
