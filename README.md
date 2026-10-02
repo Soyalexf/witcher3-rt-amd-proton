@@ -21,6 +21,32 @@ The two halves expire at different times: a Proton release will eventually ship 
 exe patch will still be needed, because the game disabling RT on seeing Wine is the game's own doing and no Proton
 update changes it. See *The two halves have different lifetimes*.
 
+## Recommended: Proton Wineland (no exe patch)
+
+The gist above now points to a route that does **not** touch the executable at all, and therefore survives game
+updates. It is **Proton Wineland** from [nanomatters' proton-cachyos releases](https://github.com/nanomatters/proton-cachyos/releases)
+(`11.0-20260930` or newer): a regular Proton build, not tied to CachyOS, that hides Wine from `witcher3.exe` only,
+through a per-game fix (`HideWineExports` for that exe). Because the game files stay untouched, *Verify integrity of
+game files* no longer undoes it and a game update does not break it. It also ships the vkd3d-proton fixes ray tracing
+needs (the BLAS size fix, tight alignment and the RADV shader fix) and turns NVAPI off on non-NVIDIA GPUs.
+
+Set it up: download `proton-wineland-<version>-x86_64.tar.xz` from the release page and extract it into
+`~/.local/share/Steam/compatibilitytools.d/`, restart Steam, then pick it under *Properties → Compatibility* and use
+the **unmodified** exe (if you first patched with this repo's script, run `bash install.sh --restore`).
+
+Two caveats:
+
+- The per-game fix runs when **Steam** launches the game. On **Heroic, Lutris or Faugus** it needs a manual step for
+  now (the gist's #75/#76/#77) — if you launch outside Steam, expect to do that by hand.
+- It is a rolling third-party Proton. Only recent proton-cachyos builds work: older ones lack `SteamUtils011` in
+  their `lsteamclient` and crash at start. If it crashes on first run, update Wineland to a newer build.
+
+The gist's end-to-end test of this route was on an **RTX 4090**; the RADV shader fix AMD needs is included. The
+*Tested on* table below is where the verified-on-RDNA numbers come from if you stay on the exe-patch route.
+
+> The rest of this README (**Requirements** through **Tested on**) documents that exe-patch route — what `build.sh`
+> and `install.sh` do, i.e. the alternative when you'd rather not run a third-party Proton.
+
 ## Requirements
 
 The exe must be **one of these two builds**, identified by the SHA256 of the untouched file. `install.sh` refuses
@@ -187,22 +213,32 @@ Also verified in `GE-Proton11-7`:
   disabling it really is just removing the variable). It works for swapping upscalers, but opening the in-game
   settings menu crashes. Leave it unset and use the game's native FG instead.
 
-### What does NOT work here: Streamline, Multi Frame Generation, DLSS Enabler
+### What does NOT work here: DLSS, Multi Frame Generation, DLSS Enabler
 
-Tried on the RDNA 4 machine and **not working**, so do not spend time on it:
+Tried on the RDNA 4 machine and **not working**:
 
-- **OptiScaler via Streamline for x3 Multi Frame Generation.** `GE-Proton11-7` has no Streamline support at all:
-  the `proton` script never references Streamline, and there is no `nvngx.dll` anywhere in the Proton tree.
-- **DLSS Enabler.** Same reason — it works by injecting `nvngx`, which is not there.
+- **The game never initialises Streamline in the first place.** This is the same `wine_get_version` check that hides
+  RT: when it finds Wine, the game skips `slInit`, so DLSS SR/RR, Reflex, frame generation and DLSS-G are all reported
+  as *unsupported* regardless of GPU. Clearing that flag (this repo's patch) restores RT, but this repo **deliberately
+  skips** the two extra offsets that would create the Streamline manager under Wine (`0x1B7169B` and `0x1B76620` on the
+  hotfix). With no Streamline manager there is nothing for DLSS to attach to. That also explains a loaded-but-idle
+  DLSS Enabler: its own log shows it injecting fine (`Loading genuine NGX file …`, then `DLL Loaded`), so the injector
+  is not the problem — the manager it needs simply never exists.
+- **Applying those DLSS patches on AMD is where it goes wrong.** The linked gist reports that with OptiScaler /
+  fakenvapi, applying them made the game exit (one report). That is why this repo keeps them out: in practice they are
+  NVIDIA-only. On top of that, OptiScaler's own Streamline interposer collides — a DLSS Enabler log shows
+  `Preloader: Streamline Interposer already loaded`. So on an RDNA card there is no supported combination that yields a
+  working DLSS option, not a toggle you are missing.
+- **x3 Multi Frame Generation cannot work on AMD at all.** DLSS 4 MFG is a hardware frame generator that exists only on
+  RTX 50-series (Blackwell) silicon; even plain DLSS-G needs an RTX 40 or newer. An RDNA card has none of that, so this
+  is out of reach rather than merely unconfigured.
 
-So the only frame generation available on this setup is the game's own **AMD FSR frame generation**, plus XeSS in
-the menu. That is what the numbers below were measured with.
+What *does* exist for AMD is `OptiScaler/dlssg_to_fsr3_amd_is_better.dll`, shipped with OptiScaler, which converts
+DLSS Frame Generation output into FSR3 so FG works on RDNA. It is not x3 and it is not DLSS, but it is the closest
+thing available. The game itself ships the full NVIDIA stack (`nvngx_dlss*.dll`, `sl.dlss*.dll`, a `streamline/`
+directory), so the missing piece is not the files but which ones get loaded and what the menu is allowed to show.
 
-Note that `PROTON_DLSS_UPGRADE=1` does exist, but it is not this: it swaps in newer DLSS DLLs for *NVIDIA* GPUs.
-It has no useful effect on an AMD card and is not a substitute for the above.
-
-Do **not** try to enable these alongside the game's FG. More than one frame generator active at once is the one
-combination that reliably broke things in testing (see the FSR/XeSS note above).
+Note that `PROTON_DLSS_UPGRADE=1` does exist, but it is unrelated: it swaps in newer DLSS DLLs for *NVIDIA* GPUs.
 
 ### Launch options that work with native FSR FG
 
@@ -216,6 +252,13 @@ with both enabled the game applies neither.
 `PROTON_LOG=1` is optional and only there for debugging: it writes a large log on every launch, so drop it once
 things work. None of the four are required for RT either; they are simply what was tested.
 
+On AMD also set `PROTON_DISABLE_NVAPI=1`, which the linked gist recommends for non-NVIDIA GPUs (it is redundant only
+if your Proton already disables NVAPI for them). Prepend it to the line above:
+
+```
+RADV_PERFTEST=rt WINE_NTSYNC=1 gamemoderun PROTON_DISABLE_NVAPI=1 PROTON_LOG=1 %command%
+```
+
 ## Known limitations
 
 - **Paths containing spaces are untested.** Everything here was tested on space-free paths
@@ -225,9 +268,9 @@ things work. None of the four are required for RT either; they are simply what w
   other vendors.
 - The exe patch modifies a game binary. It is one game's executable, it only makes the game show its own options,
   and `--restore` puts the original back. Saves and Steam features are untouched.
-- **The hotfix offsets are unverified in-game.** The `5.0.0.1044392` offsets were reported by gabrielmaialva33 and
-  d1g1talpump and are confirmed to match that build's bytes, but the game has not been run with them. The
-  `5.0.0.1041720` offsets are the ones everything below was measured with.
+- **The `5.0.0.1044392` (hotfix) offsets** were reported by gabrielmaialva33 and d1g1talpump; they match that
+  build's bytes and are now confirmed in-game with RT and FSR frame generation. The per-GPU numbers below were
+  measured on `5.0.0.1041720`.
 
 ## What exactly is patched
 
@@ -245,7 +288,16 @@ Build `5.0.0.1044392`:
 | `0x1EDE8F3` | `75 0B`  | `90 90` | Clear the Wine flag → RT / path tracing selectable |
 | `0x1EDC897` | `75`     | `EB`    | Keep the Wine buffer‑alignment path |
 
-3 bytes in 2 places, all of them RT/Wine‑related. Offsets are from the gist above (its `--rt` mode). A game update
+3 bytes in 2 places, all of them RT/Wine‑related.
+
+The buffer-alignment offset (`0x1EE09F7` / `0x1EDC897`) is only *required* on vkd3d-proton older than
+[#3308](https://github.com/HansKristian-Work/vkd3d-proton/pull/3308) (the "tight alignment" change, e.g. stock
+`GE-Proton11-7`): there, clearing the Wine flag alone makes the game request tightly-aligned 256-byte buffers, which
+get rejected and crash it within seconds. This repo's own build already includes #3308, so on **it** that offset is
+harmless rather than load-bearing — but keeping it means the same script still works if you point it at an older
+vkd3d-proton.
+
+Offsets are from the gist above (its `--rt` mode). A game update
 or Steam's *Verify integrity of game files* undoes the exe patch.
 
 Note that `install.sh` patches four DLL locations per Proton: `files/lib/wine/vkd3d-proton/<arch>` and
@@ -264,7 +316,7 @@ Two people, two GPUs, same vkd3d‑proton/dxil‑spirv build.
 | OS | CachyOS, kernel 7.2.2, KDE Plasma (Wayland) | CachyOS, Mesa 26.2.1 |
 | Mesa / RADV | 26.2.1 | 26.2.1 |
 | Proton | Experimental 11.0 (2026‑09‑24) | GE‑Proton11‑7 via `install.sh --in-place` |
-| Game build | `5.0.0.1041720` | `5.0.0.1041720`, plus `5.0.0.1044392` patched but not yet run |
+| Game build | `5.0.0.1041720` | `5.0.0.1041720` and `5.0.0.1044392` (both RT + FSR FG) |
 | Settings | 2560×1440, *RT* preset, FSR | 2560×1440, *RT* preset, native FSR FG |
 
 Builds used (both are PR branch heads, not commits in the official history — the upstream merges were squashed):
@@ -305,6 +357,14 @@ detectar Wine**, y al forzarlo **RADV se cuelga** por un fallo de dxil-spirv que
 2026‑09‑30). Este repositorio compila vkd3d‑proton con ese arreglo y el PR #3332, lo instala en una **copia aparte** de
 Proton Experimental y parchea 3 bytes en 2 sitios del ejecutable (solo los relacionados con el RT).
 
+**Recomendado por el gist (sin tocar la exe): Proton Wineland.** [nanomatters' proton-cachyos releases](https://github.com/nanomatters/proton-cachyos/releases)
+trae un Proton que oculta Wine solo para `witcher3.exe` sin tocar los ficheros del juego, sobrevive a las actualizaciones
+del juego y ya incluye los fixes de vkd3d-proton que necesita el RT (BLAS size, tight alignment y el fix RADV). Descomprímelo
+en `~/.local/share/Steam/compatibilitytools.d/`, reinicia Steam, eligelo en *Compatibilidad* y usa la exe **sin tocar**
+(si antes parcheaste con este repo, `bash install.sh --restore`). Matices: en Heroic/Lutris/Faugus el fix por juego necesita
+un paso manual (ver #75/#76/#77 del gist), y solo funcionan builds recientes — las antiguas no traen `SteamUtils011` y
+crashean. El resto de este resumen describe la ruta de este repo, que sí parchea la exe.
+
 La exe tiene que ser **una de estas dos builds**; `install.sh` rechaza cualquier otra en vez de escribir en offsets
 supuestos:
 
@@ -331,11 +391,27 @@ con RT y frame generation todavía activados de la sesión anterior. Lo que func
 generation**, empezar la partida, y una vez dentro volver a activarlos desde el preset *RT*. Es una observación de una
 sola máquina, no una causa diagnosticada, así que trátalo como apaño.
 
-**Lo que NO funciona aquí**: OptiScaler vía Streamline para el Multi Frame Generation x3, y el DLSS Enabler.
-`GE-Proton11-7` no tiene soporte de Streamline: su script `proton` no lo menciona en ningún sitio y no hay ningún
-`nvngx.dll` en el árbol de la Proton. Por lo tanto el único frame generation disponible es el **AMD FSR** nativo del
-juego (o XeSS desde el menú), que es con lo que están medidos los números de arriba. `PROTON_DLSS_UPGRADE=1` sí
-existe, pero cambia DLLs de DLSS para GPUs **NVIDIA**, no sirve en AMD y no es sustituto de lo anterior.
+**Lo que NO funciona aquí**: el **DLSS Enabler** y el **Multi Frame Generation x3**.
+
+La causa es la misma que con el RT: al detectar Wine, el juego no llama a `slInit`, así que Streamline ni se crea y DLSS
+SR/RR, Reflex, frame generation y DLSS-G aparecen como *no soportados*. Quitar ese flag (el parche de este repo) recupera
+el RT, pero **a propósito** no aplicamos los dos offsets extra que crearían el manager de Streamline bajo Wine (`0x1B7169B`
+y `0x1B76620` en el hotfix). Sin ese manager no hay dónde engancharse DLSS. Por eso un DLSS Enabler puede cargar bien (su log
+muestra que inyecta su DLL) y aun así no servir de nada: el problema no es el inyector, sino que el manager nunca existe.
+
+Además, aplicar esos parches de DLSS **en AMD** es justo donde se rompe: el gist enlazado reporta que con OptiScaler /
+fakenvapi hacían salir el juego (un reporte). Por eso este repo los deja fuera; en la práctica son solo de NVIDIA. Y por
+encima, OptiScaler mete su propio interposer de Streamline (`Preloader: Streamline Interposer already loaded`). Así que en
+una GPU RDNA no hay combinación soportada que dé una opción de DLSS funcional: no es un ajuste que falte.
+
+El **x3 Multi Frame Generation no puede funcionar en AMD**: es un generador de frames por hardware que solo existe en las
+RTX 50 (Blackwell), y hasta el DLSS-G normal necesita una RTX 40 o superior. Una GPU RDNA no tiene ese hardware, así que
+esto está fuera de alcance, no sin configurar.
+
+Lo que sí existe para AMD es `OptiScaler/dlssg_to_fsr3_amd_is_better.dll`, que viene con OptiScaler y convierte la salida
+de DLSS Frame Generation en FSR3 para que el FG funcione en RDNA. No es x3 ni es DLSS, pero es lo más parecido que hay. El
+juego trae la pila de NVIDIA completa (`nvngx_dlss*.dll`, `sl.dlss*.dll`, directorio `streamline/`), así que lo que falta
+no son los ficheros sino cuáles se cargan y qué puede mostrar el menú.
 
 Si usas una copia que no es de Steam (GOG, Lutris) o una build de Proton‑GE concreta, `install.sh --in-place`
 sustituye las DLL de vkd3d‑proton **dentro** de Proton en vez de crear una copia: sin copia, sin entrada nueva en
@@ -367,8 +443,13 @@ principal de Steam, no a una biblioteca secundaria.
 Si tienes gráfica integrada activa (Intel/AMD iGPU), usa las opciones de lanzamiento `VK_DRIVER_FILES=…radeon_icd.json`
 de arriba; si no, el juego detecta la integrada, elige *Bajo* y bloquea el RT.
 
-Lo que **no** está probado: rutas con espacios (todo se probó en rutas sin espacios), y los offsets del hotfix
-`5.0.0.1044392` están confirmados contra los bytes de esa build pero el juego no se ha ejecutado con ellos.
+**Opciones de lanzamiento**: las probadas son `RADV_PERFTEST=rt WINE_NTSYNC=1 gamemoderun %command%` (ver arriba). En
+AMD añade también `PROTON_DISABLE_NVAPI=1`, que el gist recomienda para GPUs no NVIDIA. `PROTON_LOG=1` es opcional y solo
+para depurar: escribe un log grande en cada arranque, así que quítalo cuando ya funcione.
+
+Lo que **no** está probado: las rutas con espacios (todo se probó en rutas sin espacios). Los offsets del hotfix
+`5.0.0.1044392` fueron reportados por gabrielmaialva33 y d1g1talpump, coinciden con los bytes de esa build y ya están
+confirmados in-game (RT y FSR frame generation).
 
 ## License
 
