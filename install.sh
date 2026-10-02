@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# The Witcher 3 5.0.0.1041720 (Steam build 25575366) — ray tracing on AMD under Proton (experimental)
+# The Witcher 3 5.0 (builds 5.0.0.1041720 and 5.0.0.1044392) — ray tracing on AMD under Proton (experimental)
 #   bash install.sh                     -> copies Proton Experimental to "Proton-Exp-RT-AMD" + patches witcher3.exe
 #   bash install.sh --in-place          -> patches the Proton itself, no copy and no extra compatibility tool
 #   bash install.sh --restore           -> undoes the last install (Proton DLLs and/or the custom Proton, plus the exe)
@@ -17,8 +17,8 @@ STEAM="${STEAM_DIR:-$HOME/.local/share/Steam}"
 BUILD="$HERE/build/vkd3d-proton-w3rt"
 BACKUP_DIR="$HOME/.local/share/witcher3-rt-amd-proton"
 STATE="$BACKUP_DIR/install-state"
-ORIG="$BACKUP_DIR/witcher3.exe.original-5.0.1041720"
-SHA_ORIG="c272b2c2e61f84c758e28fab69ab2915944dd1e539dbb435fae9fc67494c7e25"
+# Backup name used before the script knew several game builds (kept so old installs still restore)
+LEGACY_ORIG="$BACKUP_DIR/witcher3.exe.original-5.0.1041720"
 DST_DEFAULT="$STEAM/compatibilitytools.d/Proton-Exp-RT-AMD"
 
 usage() { sed -n '2,8s/^# \{0,1\}//p' "$0"; }
@@ -74,6 +74,26 @@ fi
 pending_restore() {
     [[ -f "$STATE" ]] || return 1
     grep -q '^restored=' "$STATE"
+}
+
+# Backup of the original exe made by the last install. One backup per game build, so a game
+# update can never be "restored" over with the exe of an older build.
+ORIG="$(read_state backup)"
+ORIG="${ORIG:-$LEGACY_ORIG}"
+
+# Compares $2 (the game's exe) with $1 (the backup of the original): prints
+#   original  identical to the backup
+#   patched   same size, differs only by the few patched bytes
+#   other     anything else (a game update, a different build, a missing file)
+exe_vs_backup() {
+    local bak="$1" exe="$2" n
+    [[ -f "$bak" && -f "$exe" ]] || { echo other; return; }
+    [[ "$(stat -c %s "$bak")" == "$(stat -c %s "$exe")" ]] || { echo other; return; }
+    n="$({ cmp -l "$bak" "$exe" 2>/dev/null || true; } | wc -l)"
+    if (( n == 0 )); then echo original
+    elif (( n <= 3 )); then echo patched
+    else echo other
+    fi
 }
 
 PROTON="${PROTON_DIR:-${PROTON_EXP_DIR:-$(read_state proton)}}"
@@ -191,7 +211,13 @@ if [[ "$ACTION" == restore ]]; then
             rm -rf "$DST" && echo "Removed $DST"
         fi
     fi
-    if [[ -f "$ORIG" ]]; then cp -f "$ORIG" "$EXE" && echo "Restored original witcher3.exe"
+    if [[ -f "$ORIG" ]]; then
+        case "$(exe_vs_backup "$ORIG" "$EXE")" in
+            patched)  cp -f "$ORIG" "$EXE" && echo "Restored original witcher3.exe" ;;
+                        original) echo "witcher3.exe is already the original." ;;
+                        *) echo "witcher3.exe does not match the backup ($ORIG): the game was probably updated."
+                           echo "Left it alone. Use Steam > Verify integrity of game files if you want the stock exe." ;;
+                    esac
     else echo "No backup found; use Steam > Verify integrity of game files."; fi
     # Keep the state file: it only records where the Proton and the exe live, and
     # deleting it makes the next install fall back to "Proton - Experimental" and a
@@ -295,35 +321,113 @@ fi
 
 # Exe patch: clear the "running under Wine" flag that zeroes RT capability.
 #    Only the two RT-related changes; the NVIDIA/Streamline (DLSS) patches are NOT applied.
+#    Every supported game build has its own offsets. The build is identified by the SHA256 of the
+#    untouched exe and anything else is refused, never patched at guessed offsets.
 echo "== Patching witcher3.exe"
-python3 - "$EXE" "$SHA_ORIG" "$ORIG" <<'PY'
+BACKUP_PTR="$(mktemp)"
+python3 - "$EXE" "$BACKUP_DIR" "$BACKUP_PTR" <<'PY'
 import sys, hashlib, os, shutil
-exe, sha_orig, orig = sys.argv[1:4]
+
+exe, backup_dir, ptr_file = sys.argv[1:4]
+
+WINE_FLAG = 'clear Wine flag -> RT/PT selectable'
+ALIGN = 'keep Wine buffer-alignment path'
+
+
+# SHA256 of the untouched exe -> build. Offsets are file offsets; bytes are hex.
+BUILDS = {
+    'c272b2c2e61f84c758e28fab69ab2915944dd1e539dbb435fae9fc67494c7e25': {
+        'version': '5.0.0.1041720',          # Steam build 25575366
+        'backup': 'witcher3.exe.original-5.0.1041720',
+        'patches': [
+            (0x1EE2A53, '750b', '9090', WINE_FLAG),
+            (0x1EE09F7, '75',   'eb',   ALIGN),
+        ],
+    },
+    '9406eccc12b68e08920931442ef6a57340e910d3e01f2082e88232487433fe51': {
+        'version': '5.0.0.1044392',          # 5.00c hotfix, Steam build 25646871, 90674640 bytes
+        'backup': 'witcher3.exe.original-5.0.1044392',
+        # Offsets reported by gabrielmaialva33 and d1g1talpump; not tested by the script author.
+        'patches': [
+            (0x1EDE8F3, '750b', '9090', WINE_FLAG),
+            (0x1EDC897, '75',   'eb',   ALIGN),
+        ],
+    },
+}
+
+def patches_of(build):
+    return [(o, bytes.fromhex(old), bytes.fromhex(new), desc)
+            for o, old, new, desc in build['patches']]
+
+def at(data, offset, expected):          # False when the offset is past the end of the file
+    return data[offset:offset + len(expected)] == expected
+
+def sha256_file(path):
+    h = hashlib.sha256()
+    with open(path, 'rb') as f:
+        for chunk in iter(lambda: f.read(1 << 20), b''):
+            h.update(chunk)
+    return h.hexdigest()
+
+def remember_backup(path):
+    with open(ptr_file, 'w') as f:
+        f.write(path)
+
 d = bytearray(open(exe, 'rb').read())
-patches = [  # (offset, original, new, description)
-    (0x1EE2A53, bytes.fromhex('750b'), bytes.fromhex('9090'), 'clear Wine flag -> RT/PT selectable'),
-    (0x1EE09F7, bytes.fromhex('75'),   bytes.fromhex('eb'),   'keep Wine buffer-alignment path'),
-]
-if all(d[o:o+len(n)] == n for o, _, n, _ in patches):
-    print('Already patched.'); sys.exit(0)
-if hashlib.sha256(d).hexdigest() != sha_orig:
-    sys.exit('witcher3.exe is not build 5.0.0.1041720: refusing to patch.')
-if not os.path.exists(orig):
-    shutil.copy2(exe, orig); print(f'  backup: {orig}')
+digest = hashlib.sha256(d).hexdigest()
+build = BUILDS.get(digest)
+
+if build is None:
+    # Not an untouched supported build. Is it one this script patched already?
+    for b in BUILDS.values():
+        bak = os.path.join(backup_dir, b['backup'])
+        if (os.path.isfile(bak) and os.path.getsize(bak) == len(d)
+                and all(at(d, o, new) for o, _, new, _ in patches_of(b))):
+            print(f"Already patched (build {b['version']}).")
+            remember_backup(bak)
+            sys.exit(0)
+    sys.exit(f'witcher3.exe (sha256 {digest}) is not a supported build: refusing to patch.\n'
+             'Supported builds: ' + ', '.join(b['version'] for b in BUILDS.values()))
+
+# The hash matched, but still check the bytes about to be overwritten before touching anything.
+patches = patches_of(build)
 for o, old, new, desc in patches:
-    assert d[o:o+len(old)] == old, hex(o)
-    d[o:o+len(new)] = new
+    if not at(d, o, old):
+        sys.exit(f"unexpected bytes at {hex(o)} for build {build['version']}: refusing to patch.")
+
+bak = os.path.join(backup_dir, build['backup'])
+if os.path.exists(bak):
+    if sha256_file(bak) != digest:
+        sys.exit(f'{bak} exists but is not the original exe of build {build["version"]}.\n'
+                 'Move it away and run again.')
+else:
+    shutil.copy2(exe, bak)
+    print(f'  backup: {bak}')
+
+print(f"  build {build['version']}")
+for o, old, new, desc in patches:
+    d[o:o + len(new)] = new
     print(f'  {hex(o)}: {old.hex()} -> {new.hex()}  ({desc})')
-open(exe, 'wb').write(d)
+with open(exe, 'wb') as f:
+    f.write(d)
+remember_backup(bak)
 print('OK')
 PY
+# --restore reads this back, so it undoes this build's backup and no other
+printf 'backup=%s\n' "$(cat "$BACKUP_PTR")" >> "$STATE"
+rm -f "$BACKUP_PTR"
 
 cat <<'EOF'
 
+
 Done. Next:
-  1) Launch the game. Proton copies the new vkd3d-proton into the prefix on every start, so
+  1) RESTART Steam, fully, then pick the patched Proton under Properties > Compatibility.
+     This is not optional: Steam caches the list of compatibility tools, so if it was
+     already running the patched Proton may not be picked up and the game can crash on
+     start. Restarting first avoids that.
+  2) Launch the game. Proton copies the new vkd3d-proton into the prefix on every start, so
      no prefix deletion is needed.
-  2) In-game: Graphics > preset "RT".
+  3) In-game: Graphics > preset "RT".
   On hybrid systems (iGPU + dGPU) add to launch options so the game's hardware
   detection only sees the AMD card:
     VK_DRIVER_FILES=/usr/share/vulkan/icd.d/radeon_icd.json VK_ICD_FILENAMES=/usr/share/vulkan/icd.d/radeon_icd.json %command%
